@@ -1,0 +1,15 @@
+app.py
+requirements. txt
+dash
+pandas
+plotly
+yagmail
+requests
+gunicorn
+render.yaml
+services:
+  - type: web
+    name: stock-analyzer-app
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app.server --timeout 120
