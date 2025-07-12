@@ -138,3 +138,20 @@ start_auto_refresh()
 
 if __name__ == '__main__':
     app.run_server(debug=False, host='0.0.0.0', port=8050)
+
+
+
+dash
+pandas
+plotly
+requests
+gunicorn
+
+services:
+  - type: web
+    name: stock-analyzer
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:server --timeout 120
+
