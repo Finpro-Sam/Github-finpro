@@ -1,6 +1,13 @@
 /app.py
 /requirements.txt
 /render.yaml
+#services:
+  - type: web
+    name: stock-analyzer
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:server --timeout 120
 # app.py
 import pandas as pd
 import plotly.graph_objs as go
@@ -147,11 +154,5 @@ plotly
 requests
 gunicorn
 
-services:
-  - type: web
-    name: stock-analyzer
-    env: python
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:server --timeout 120
+
 
