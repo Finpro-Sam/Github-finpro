@@ -1,17 +1,6 @@
-requirements. txt
-dash
-pandas
-plotly
-yagmail
-requests
-gunicorn
-render.yaml
-services:
-  - type: web
-    name: stock-analyzer-app
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app.server --timeout 120
+/app.py
+/requirements.txt
+/render.yaml
 # app.py
 import pandas as pd
 import plotly.graph_objs as go
@@ -24,7 +13,7 @@ import time
 
 # === CONFIGURATION ===
 CSV_URL = "https://drive.google.com/uc?export=download&id=1HEcZ1BgJTG3VqlfnhIEq8llEtW-lJbWk"
-REFRESH_INTERVAL = 300  # seconds (5 minutes)
+REFRESH_INTERVAL = 300  # 5 minutes
 
 # === GLOBAL STORAGE ===
 price_df = pd.DataFrame()
@@ -33,21 +22,21 @@ volume_df = pd.DataFrame()
 def load_data_from_drive():
     global price_df, volume_df
     try:
-        print("⏳ Fetching latest CSV from Google Drive...")
+        print("Fetching latest CSV from Google Drive...")
         content = requests.get(CSV_URL).content
         df = pd.read_csv(io.StringIO(content.decode('utf-8')))
         df.set_index('stock name', inplace=True)
 
-        # Extract and process
         price_df = df.drop(columns=['volume_std'], errors='ignore')
         volume_df = df[['volume_std']]
         price_df['price_std'] = price_df.std(axis=1)
         price_df['mean_price'] = price_df.drop(columns=['price_std'], errors='ignore').mean(axis=1)
-        print("✅ CSV updated successfully.")
-    except Exception as e:
-        print(f"❌ Failed to fetch or parse CSV: {e}")
 
-# === BACKGROUND REFRESH THREAD ===
+        print("CSV updated.")
+    except Exception as e:
+        print(f"Failed to load CSV: {e}")
+
+# === AUTO REFRESH ===
 def start_auto_refresh():
     def loop():
         while True:
@@ -56,7 +45,7 @@ def start_auto_refresh():
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()
 
-# === ANALYSIS FUNCTIONS ===
+# === STOCK ANALYSIS ===
 def plot_stock_return_fig(stock_name):
     stock_prices = price_df.loc[stock_name].drop(['price_std', 'mean_price']).sort_index().astype(float)
     mean = price_df.loc[stock_name, 'mean_price']
@@ -73,10 +62,7 @@ def plot_stock_return_fig(stock_name):
 def stocks_crossing_2nd_std():
     if price_df.empty: return []
     latest_date = price_df.columns[-3]
-    mean = price_df['mean_price']
-    std = price_df['price_std']
-    current_price = price_df[latest_date]
-    return price_df[(current_price < (mean - 2 * std))].index.tolist()
+    return price_df[price_df[latest_date] < (price_df['mean_price'] - 2 * price_df['price_std'])].index.tolist()
 
 def high_volume_spikes():
     if volume_df.empty: return []
@@ -86,31 +72,20 @@ def high_volume_spikes():
     return volume_df[volume_df[last_day] > last_7_avg].index.tolist()
 
 def get_buzzing_stocks():
-    std_symbols = stocks_crossing_2nd_std()
-    vol_symbols = high_volume_spikes()
-    return list(set(std_symbols).union(std_symbols, vol_symbols))
+    return list(set(stocks_crossing_2nd_std()).union(high_volume_spikes()))
 
 # === DASH APP ===
 app = Dash(__name__)
-app.title = "📈 Stock Analyzer"
+server = app.server  # For Render
 
 app.layout = html.Div([
     html.H2("📊 Stock Price Analyzer"),
     dcc.Dropdown(id='stock-dropdown', options=[], placeholder="Select stock...", style={'width': '50%'}),
     dcc.Graph(id='price-graph'),
     html.Div([
-        html.Div([
-            html.H4("📉 Below -2σ"),
-            html.Ul(id='std-list')
-        ], style={'width': '32%', 'display': 'inline-block'}),
-        html.Div([
-            html.H4("🔥 Volume Spikes"),
-            html.Ul(id='volume-list')
-        ], style={'width': '32%', 'display': 'inline-block'}),
-        html.Div([
-            html.H4("🚀 Buzzing Stocks"),
-            html.Ul(id='buzzing-list')
-        ], style={'width': '32%', 'display': 'inline-block'})
+        html.Div([html.H4("📉 Below -2σ"), html.Ul(id='std-list')], style={'width': '32%', 'display': 'inline-block'}),
+        html.Div([html.H4("🔥 Volume Spikes"), html.Ul(id='volume-list')], style={'width': '32%', 'display': 'inline-block'}),
+        html.Div([html.H4("🚀 Buzzing Stocks"), html.Ul(id='buzzing-list')], style={'width': '32%', 'display': 'inline-block'})
     ]),
     html.Div([
         dcc.Input(id='email-input', type='text', placeholder='Enter email(s), comma-separated'),
@@ -119,17 +94,11 @@ app.layout = html.Div([
     ])
 ], style={'padding': '20px'})
 
-@app.callback(
-    Output('stock-dropdown', 'options'),
-    Input('price-graph', 'id')
-)
+@app.callback(Output('stock-dropdown', 'options'), Input('price-graph', 'id'))
 def update_dropdown(_):
     return [{'label': s, 'value': s} for s in price_df.index]
 
-@app.callback(
-    Output('price-graph', 'figure'),
-    Input('stock-dropdown', 'value')
-)
+@app.callback(Output('price-graph', 'figure'), Input('stock-dropdown', 'value'))
 def update_graph(stock_name):
     if not stock_name: return go.Figure()
     return plot_stock_return_fig(stock_name)
@@ -144,26 +113,18 @@ def update_lists(_):
     return (
         [html.Li(s) for s in stocks_crossing_2nd_std()],
         [html.Li(s) for s in high_volume_spikes()],
-        [html.Li(s) for s in get_buzzing_stocks()],
+        [html.Li(s) for s in get_buzzing_stocks()]
     )
 
-@app.callback(
-    Output('send-status', 'children'),
-    Input('send-btn', 'n_clicks'),
-    Input('email-input', 'value'),
-    prevent_initial_call=True
-)
+@app.callback(Output('send-status', 'children'), Input('send-btn', 'n_clicks'), Input('email-input', 'value'), prevent_initial_call=True)
 def send_email(n_clicks, email_str):
     if not email_str: return "Please enter email(s)."
     try:
         email_list = [e.strip() for e in email_str.split(',')]
-        std = stocks_crossing_2nd_std()
-        vol = high_volume_spikes()
-        buzz = get_buzzing_stocks()
         content = f"""
-        -2σ Drops: {', '.join(std) if std else 'None'}
-        Volume Spikes: {', '.join(vol) if vol else 'None'}
-        Buzzing Stocks: {', '.join(buzz) if buzz else 'None'}
+        -2σ Drops: {', '.join(stocks_crossing_2nd_std())}
+        Volume Spikes: {', '.join(high_volume_spikes())}
+        Buzzing Stocks: {', '.join(get_buzzing_stocks())}
         """
         yag = yagmail.SMTP(user='your_email@gmail.com', password='your_app_password')
         yag.send(to=email_list, subject="📈 Stock Alert Summary", contents=content)
@@ -171,9 +132,9 @@ def send_email(n_clicks, email_str):
     except Exception as e:
         return f"❌ Email error: {e}"
 
-# === Run ===
+# === INIT ===
 load_data_from_drive()
 start_auto_refresh()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run_server(debug=False, host='0.0.0.0', port=8050)
